@@ -1,0 +1,81 @@
+---
+title: 'Assignment 3: Regression Analysis'
+author: "Fred LaBeau"
+date: "11/29/2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(broom)
+
+```
+
+```{r}
+salary <- read_excel("Salary_Data.xlsx")
+
+glimpse(salary)
+summary(salary)
+```
+
+```{r}
+summary(salary$YearsExperience)
+summary(salary$Salary)
+
+cor(salary$YearsExperience, salary$Salary)
+
+```
+
+```{r}
+# Scatterplot
+ggplot(salary, aes(x = YearsExperience, y = Salary)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Salary vs Years of Experience",
+       x = "Years of Experience",
+       y = "Salary")
+```
+
+```{r}
+model <- lm(Salary ~ YearsExperience, data = salary)
+summary(model)
+
+```
+
+```{r}
+par(mfrow = c(2, 2))
+plot(model)  # produces 4 standard diagnostic plots
+par(mfrow = c(1, 1))
+
+```
+
+```{r}
+residuals <- resid(model)
+summary(residuals)
+sd(residuals)
+
+```
+
+```{r}
+new_data <- data.frame(
+  YearsExperience = c(2, 5, 8, 10)
+)
+
+predictions <- predict(model, newdata = new_data, interval = "confidence")
+predictions
+
+```
+
+```{r}
+pred_with_pi <- predict(model, newdata = new_data, interval = "prediction")
+pred_with_pi
+
+```
+
