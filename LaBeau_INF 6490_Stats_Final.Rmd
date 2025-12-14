@@ -1,0 +1,451 @@
+---
+title: "INF 6490 Final Project"
+author: "Fred LaBeau"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Load libraries for assessment
+```{r}
+library(tidyverse)  
+library(janitor)    
+library(skimr)      
+library(GGally)     
+library(broom)      
+library(lubridate)  
+library(car)        
+library(rstatix)    
+library(effectsize) 
+library(emmeans)  
+library(rsample)   
+library(yardstick)
+
+```
+
+#Import data and look at it
+```{r}
+ai_jobs_raw <- readxl::read_xlsx("ai_job_market.xlsx")
+
+glimpse(ai_jobs_raw)
+head(ai_jobs_raw)
+```
+
+
+#Clean job data
+```{r}
+ai_jobs <- ai_jobs_raw %>%
+  janitor::clean_names()
+```
+
+
+#Parse salary range and divide into 3 sections (salary_min, salary_max, salary_mid)
+```{r}
+ai_jobs <- ai_jobs %>%
+  tidyr::separate(
+    col   = salary_range_usd,
+    into  = c("salary_min", "salary_max"),
+    sep   = "-",
+    remove = TRUE
+  ) %>%
+  mutate(
+    salary_min = as.numeric(salary_min),
+    salary_max = as.numeric(salary_max),
+    salary_mid = (salary_min + salary_max) / 2
+  )
+```
+
+
+#Convert date and categorical variables
+```{r}
+ai_jobs <- ai_jobs %>%
+  mutate(
+    #Convert posted_date to Date
+    posted_date = as.Date(posted_date),
+
+    #Create ordered factor for experience level
+    experience_level = factor(
+      experience_level,
+      levels = c("Entry", "Mid", "Senior"),
+      ordered = TRUE
+    ),
+
+    #Set employment type as factor
+    employment_type = factor(employment_type),
+    
+    #Set Industry as factor
+    industry = factor(industry),
+
+    #Set company size as ordered factor (dataset uses: Startup, Mid, Large)
+    company_size = factor(
+      company_size,
+      levels = c("Startup", "Mid", "Large"),
+      ordered = TRUE
+    ),
+
+    #Set job title as factor
+    job_title = factor(job_title)
+  )
+```
+
+
+#Additional dataset checking
+```{r}
+#Overview of variables and missing values
+skimr::skim(ai_jobs)
+
+#Count NAs per column to clean
+colSums(is.na(ai_jobs))
+
+
+glimpse(ai_jobs)
+```
+
+
+#Compute measures of central tendency and dispersion
+```{r}
+#Identify continuous (numeric) variables ----
+numeric_vars <- ai_jobs %>%
+  dplyr::select(where(is.numeric))
+
+glimpse(numeric_vars)
+
+#Compute the statistical mode ----
+get_mode <- function(x) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) return(NA_real_)
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+#Summary: mean, median, variance, SD for each numeric variable ----
+numeric_summary <- numeric_vars %>%
+  summarise(
+    across(
+      everything(),
+      list(
+        mean   = ~ mean(. , na.rm = TRUE),
+        median = ~ median(. , na.rm = TRUE),
+        var    = ~ var(. , na.rm = TRUE),
+        sd     = ~ sd(. , na.rm = TRUE)
+      )
+    )
+  ) %>%
+  #Make the output tidy: one row per variable/stat combination
+  pivot_longer(
+    cols      = everything(),
+    names_to  = c("variable", "stat"),
+    names_sep = "_",
+    values_to = "value"
+  ) %>%
+  arrange(variable, stat)
+
+numeric_summary
+
+#Add mode for each numeric variable ----
+numeric_mode <- numeric_vars %>%
+  summarise(
+    across(
+      everything(),
+      get_mode,
+      .names = "{.col}_mode"
+    )
+  ) %>%
+  pivot_longer(
+    cols      = everything(),
+    names_to  = "variable",
+    values_to = "mode"
+  ) %>%
+  mutate(
+    variable = stringr::str_remove(variable, "_mode$")
+  )
+
+numeric_mode
+
+```
+
+
+#Generate frequency tables and proportions for variables
+```{r}
+#Choose categorical variables
+categorical_vars <- ai_jobs %>%
+  dplyr::select(experience_level, industry, employment_type, company_size)
+
+glimpse(categorical_vars)
+
+#Create frequency table + proportions based on experience level
+experience_table <- ai_jobs %>%
+  janitor::tabyl(experience_level) %>%
+  janitor::adorn_totals("row") %>%
+  janitor::adorn_percentages("col") %>%
+  janitor::adorn_pct_formatting(digits = 1)
+
+experience_table
+
+#Create frequency table + proportions based on industry
+industry_table <- ai_jobs %>%
+  janitor::tabyl(industry) %>%
+  janitor::adorn_totals("row") %>%
+  janitor::adorn_percentages("col") %>%
+  janitor::adorn_pct_formatting(digits = 1)
+
+industry_table
+
+#Create frequency table + proportions based on employment type
+employment_type_table <- ai_jobs %>%
+  janitor::tabyl(employment_type) %>%
+  janitor::adorn_totals("row") %>%
+  janitor::adorn_percentages("col") %>%
+  janitor::adorn_pct_formatting(digits = 1)
+
+employment_type_table
+
+#Create frequency table + proportions based on company size
+company_size_table <- ai_jobs %>%
+  janitor::tabyl(company_size) %>%
+  janitor::adorn_totals("row") %>%
+  janitor::adorn_percentages("col") %>%
+  janitor::adorn_pct_formatting(digits = 1)
+
+company_size_table
+
+```
+
+#Histogram creation to show salary distribution
+
+```{r}
+ggplot(ai_jobs, aes(x = salary_mid)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  labs(
+    title = "Distribution of Median AI Job Salaries",
+    x = "Median Salary (USD)",
+    y = "Frequency"
+  )
+
+```
+
+#Bar chart creation to show job experience levels
+```{r}
+ggplot(ai_jobs, aes(x = experience_level)) +
+  geom_bar(fill = "darkorchid") +
+  labs(
+    title = "Count of AI Jobs by Experience Level",
+    x = "Experience Level",
+    y = "Number of Job Listings"
+  )
+
+```
+
+#Box plot for salary by experience level
+```{r}
+ggplot(ai_jobs, aes(x = experience_level, y = salary_mid)) +
+  geom_boxplot(fill = "tan") +
+  labs(
+    title = "Salary Distribution by Experience Level",
+    x = "Experience Level",
+    y = "Median Salary (USD)"
+  )
+
+```
+
+#Box plot of salary by industry
+```{r}
+ggplot(ai_jobs, aes(x = industry, y = salary_mid)) +
+  geom_boxplot(fill = "mediumpurple") +
+  labs(
+    title = "Salary Distribution by Industry",
+    x = "Industry",
+    y = "Median Salary (USD)"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+#Box plot of Salary by employment type
+```{r}
+ggplot(ai_jobs, aes(x = employment_type, y = salary_mid)) +
+  geom_boxplot(fill = "seagreen") +
+  labs(
+    title = "Salary Distribution by Employment Type",
+    x = "Employment Type",
+    y = "Median Salary (USD)"
+  )
+
+```
+
+#Box plot of Salary vs Company Size
+```{r}
+ggplot(ai_jobs, aes(x = company_size, y = salary_mid)) +
+  geom_boxplot(fill = "tomato") +
+  labs(
+    title = "Salary Distribution by Company Size",
+    x = "Company Size",
+    y = "Median Salary (USD)"
+  )
+
+```
+
+#Correlation Visualization
+```{r}
+ggplot(ai_jobs, aes(x = experience_level, y = salary_mid)) +
+  geom_boxplot(fill = "lightblue") +
+  facet_wrap(~ industry, scales = "free_y") +
+  labs(
+    title = "Salary by Experience Within Each Industry",
+    x = "Experience Level",
+    y = "Median Salary (USD)"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+#Checking assumptions for salary comparisons
+```{r}
+
+ai_jobs %>%
+  summarise(
+    n = sum(!is.na(salary_mid)),
+    mean = mean(salary_mid, na.rm = TRUE),
+    sd = sd(salary_mid, na.rm = TRUE)
+  )
+
+
+ai_jobs %>%
+  group_by(experience_level) %>%
+  summarise(p_shapiro = shapiro.test(salary_mid)$p.value)
+
+# Homogeneity of variance Levene’s Test1
+car::leveneTest(salary_mid ~ experience_level, data = ai_jobs)
+
+# Homogeneity of variance for industry
+car::leveneTest(salary_mid ~ industry, data = ai_jobs)
+
+# Homogeneity of variance for employment type
+car::leveneTest(salary_mid ~ employment_type, data = ai_jobs)
+
+```
+
+#One way ANOVA
+```{r}
+# ANOVA
+anova_rq1 <- aov(salary_mid ~ experience_level, data = ai_jobs)
+summary(anova_rq1)
+
+# Effect size (eta squared) with CI
+effectsize::eta_squared(anova_rq1, ci = 0.95)
+
+```
+
+#Estimate marginal means
+```{r}
+emm_rq1 <- emmeans::emmeans(anova_rq1, ~ experience_level)
+emm_rq1
+confint(emm_rq1, level = 0.95)
+pairs(emm_rq1, adjust = "tukey")
+
+```
+
+#Assessing whether industries pay differently
+```{r}
+anova_rq3 <- aov(salary_mid ~ industry * experience_level, data = ai_jobs)
+summary(anova_rq3)
+
+# Effect sizes with CI
+effectsize::eta_squared(anova_rq3, ci = 0.95)
+
+emm_industry <- emmeans::emmeans(anova_rq3, ~ industry)
+pairs(emm_industry, adjust = "tukey")
+confint(emm_industry, level = 0.95)
+
+emm_ind_by_exp <- emmeans::emmeans(anova_rq3, ~ industry | experience_level)
+pairs(emm_ind_by_exp, adjust = "tukey")
+confint(emm_ind_by_exp, level = 0.95)
+
+
+```
+
+#Assessing if employment type affects salary
+```{r}
+anova_rq4 <- aov(salary_mid ~ employment_type, data = ai_jobs)
+summary(anova_rq4)
+
+effectsize::eta_squared(anova_rq4, ci = 0.95)
+
+emm_emp <- emmeans::emmeans(anova_rq4, ~ employment_type)
+confint(emm_emp, level = 0.95)
+pairs(emm_emp, adjust = "tukey")
+
+
+```
+
+#Chi square to assess relationship of categories
+```{r}
+tab_emp_ind <- table(ai_jobs$employment_type, ai_jobs$industry)
+chisq.test(tab_emp_ind)
+effectsize::cramers_v(tab_emp_ind, ci = 0.95)
+
+```
+
+#Spearman correlation between salary and experience level
+```{r}
+ai_jobs <- ai_jobs %>%
+  mutate(exp_rank = as.numeric(experience_level))
+
+cor.test(ai_jobs$salary_mid, ai_jobs$exp_rank, method = "spearman")
+
+```
+
+```{r}
+set.seed(123)
+
+
+model_df <- ai_jobs %>%
+  select(
+    salary_mid, experience_level, industry, employment_type, company_size, job_title
+  ) %>%
+  drop_na()
+
+
+split_obj <- initial_split(model_df, prop = 0.80, strata = experience_level)
+train_df  <- training(split_obj)
+test_df   <- testing(split_obj)
+
+nrow(train_df)
+nrow(test_df)
+
+```
+
+#Linear regression
+```{r}
+lin_mod <- lm(
+  salary_mid ~ experience_level + industry + employment_type + company_size + job_title,
+  data = train_df
+)
+
+summary(lin_mod)
+broom::tidy(lin_mod)
+broom::glance(lin_mod)
+
+test_pred <- test_df %>%
+  mutate(
+    pred_salary_mid = predict(lin_mod, newdata = test_df)
+  )
+
+head(test_pred)
+
+lin_metrics <- test_pred %>%
+  yardstick::metrics(truth = salary_mid, estimate = pred_salary_mid) %>%
+  filter(.metric %in% c("rmse", "rsq"))
+
+lin_metrics
+
+par(mfrow = c(2,2))
+plot(lin_mod)
+par(mfrow = c(1,1))
+
+
+```
+
